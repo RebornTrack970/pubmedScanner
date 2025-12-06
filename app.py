@@ -13,6 +13,32 @@ if (not os.environ.get('PYTHONHTTPSVERIFY', '') and
 
 st.set_page_config(page_title="PubMed Web Scanner by RTOmega", page_icon="🧬", layout="wide")
 
+STUDY_TYPES = [
+    "Adaptive Clinical Trial", "Address", "Autobiography", "Bibliography", "Biography", 
+    "Books and Documents", "Case Reports", "Classical Article", "Clinical Conference", 
+    "Clinical Study", "Clinical Trial", "Clinical Trial Protocol", "Clinical Trial, Phase I", 
+    "Clinical Trial, Phase II", "Clinical Trial, Phase III", "Clinical Trial, Phase IV", 
+    "Clinical Trial, Veterinary", "Collected Work", "Comment", "Comparative Study", 
+    "Congress", "Consensus Development Conference", "Consensus Development Conference, NIH", 
+    "Controlled Clinical Trial", "Corrected and Republished Article", "Dataset", "Dictionary", 
+    "Directory", "Duplicate Publication", "Editorial", "Electronic Supplementary Materials", 
+    "English Abstract", "Equivalence Trial", "Evaluation Study", "Expression of Concern", 
+    "Festschrift", "Government Publication", "Guideline", "Historical Article", 
+    "Interactive Tutorial", "Interview", "Introductory Journal Article", "Lecture", 
+    "Legal Case", "Legislation", "Letter", "Meta-Analysis", "Multicenter Study", 
+    "Network Meta-Analysis", "News", "Newspaper Article", "Observational Study", 
+    "Observational Study, Veterinary", "Overall", "Patient Education Handout", 
+    "Periodical Index", "Personal Narrative", "Portrait", "Practice Guideline", 
+    "Pragmatic Clinical Trial", "Preprint", "Published Erratum", "Randomized Controlled Trial", 
+    "Randomized Controlled Trial, Veterinary", "Research Support, American Recovery and Reinvestment Act", 
+    "Research Support, N.I.H., Extramural", "Research Support, N.I.H., Intramural", 
+    "Research Support, Non-U.S. Gov't", "Research Support, U.S. Gov't, Non-P.H.S.", 
+    "Research Support, U.S. Gov't, P.H.S.", "Research Support, U.S. Gov't", 
+    "Retracted Publication", "Retraction of Publication", "Review", "Scientific Integrity Review", 
+    "Scoping Review", "Systematic Review", "Technical Report", "Twin Study", 
+    "Validation Study", "Video-Audio Media", "Webcast"
+]
+
 def normalize_journal_name(name):
     if not isinstance(name, str):
         return ""
@@ -141,7 +167,7 @@ col1, col2 = st.columns(2)
 with col1:
     kw_or = st.text_input("OR Keywords (e.g. lung cancer, nsclc)")
     kw_and = st.text_input("AND Keywords (e.g. biomarker)")
-    study_type = st.text_input("Study Types (e.g. Clinical Trial)")
+    study_type = st.multiselect("Study Types", STUDY_TYPES)
 
 with col2:
     start_year = st.text_input("Start Year", value="2020")
@@ -150,11 +176,10 @@ with col2:
 
 k_or_list = [x.strip() for x in kw_or.split(",") if x.strip()]
 k_and_list = [x.strip() for x in kw_and.split(",") if x.strip()]
-s_type_list = [x.strip() for x in study_type.split(",") if x.strip()]
 
 or_part = " OR ".join([f'"{kw}"[Title/Abstract]' for kw in k_or_list])
 and_part = " AND ".join([f'"{kw}"[Title/Abstract]' for kw in k_and_list])
-type_part = " OR ".join([f'"{t}"[Publication Type]' for t in s_type_list])
+type_part = " OR ".join([f'"{t}"[Publication Type]' for t in study_type])
 date_part = f'("{start_year}"[Date - Publication] : "{end_year}"[Date - Publication])'
 
 parts = []
@@ -182,7 +207,24 @@ if st.button("🚀 Start Search", type="primary"):
             cols = ["PMID", "Quartile", "Title", "First Author", "Journal", "Year", "DOI", "Article Type"]
             df = df[cols]
 
-            st.dataframe(df, use_container_width=True)
+            df_display = df.copy()
+            df_display["PMID"] = df_display["PMID"].apply(lambda x: f"https://pubmed.ncbi.nlm.nih.gov/{x}/" if x else None)
+
+            st.dataframe(
+                df_display,
+                column_config={
+                    "PMID": st.column_config.LinkColumn(
+                        label="PMID",
+                        display_text=r"https://pubmed\.ncbi\.nlm\.nih\.gov/(.*?)/"
+                    ),
+                    "DOI": st.column_config.LinkColumn(
+                        label="DOI",
+                        display_text=r"https://doi\.org/(.*)"
+                    )
+                },
+                use_container_width=True,
+                hide_index=True
+            )
 
             excel_data = to_excel(df)
             
