@@ -11,7 +11,7 @@ if (not os.environ.get('PYTHONHTTPSVERIFY', '') and
         getattr(ssl, '_create_unverified_context', None)):
     ssl._create_default_https_context = ssl._create_unverified_context
 
-st.set_page_config(page_title="PubMed Web Scanner", page_icon="🧬", layout="wide")
+st.set_page_config(page_title="PubMed Web Scanner by RTOmega", page_icon="🧬", layout="wide")
 
 def normalize_journal_name(name):
     if not isinstance(name, str):
