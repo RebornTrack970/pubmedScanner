@@ -5,14 +5,17 @@ import re
 import ssl
 import os
 from Bio import Entrez, Medline
+from docx import Document # New import for Word generation
 from difflib import get_close_matches
 
+# --- SSL Fix ---
 if (not os.environ.get('PYTHONHTTPSVERIFY', '') and
         getattr(ssl, '_create_unverified_context', None)):
     ssl._create_default_https_context = ssl._create_unverified_context
 
 st.set_page_config(page_title="PubMed Web Scanner by RTOmega", page_icon="🧬", layout="wide")
 
+# --- Study Types List ---
 STUDY_TYPES = [
     "Adaptive Clinical Trial", "Address", "Autobiography", "Bibliography", "Biography", 
     "Books and Documents", "Case Reports", "Classical Article", "Clinical Conference", 
@@ -39,6 +42,8 @@ STUDY_TYPES = [
     "Validation Study", "Video-Audio Media", "Webcast"
 ]
 
+# --- Helper Functions ---
+
 def normalize_journal_name(name):
     if not isinstance(name, str):
         return ""
@@ -58,6 +63,7 @@ def search_pubmed(query, max_results):
         if not ids:
             return pd.DataFrame()
 
+        # Initial fetch for the table list (Medline format is faster/lighter)
         handle = Entrez.efetch(db="pubmed", id=",".join(ids), rettype="medline", retmode="text")
         records = Medline.parse(handle)
         
@@ -70,6 +76,7 @@ def search_pubmed(query, max_results):
                 doi_link = f"https://doi.org/{clean_doi}"
 
             articles.append({
+                "Select": False, # Add Checkbox column
                 "PMID": r.get("PMID", ""),
                 "Title": r.get("TI", ""),
                 "First Author": r.get("AU", ["N/A"])[0],
@@ -121,17 +128,20 @@ def process_quartiles(df, file_source):
 
 def to_excel(df):
     output = io.BytesIO()
+    # Remove 'Select' column for Excel export
+    export_df = df.drop(columns=['Select'], errors='ignore')
+    
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Results')
+        export_df.to_excel(writer, index=False, sheet_name='Results')
         workbook = writer.book
         worksheet = writer.sheets['Results']
         
         link_fmt = workbook.add_format({'font_color': 'blue', 'underline': 1})
         
-        pmid_idx = df.columns.get_loc("PMID")
-        doi_idx = df.columns.get_loc("DOI")
+        pmid_idx = export_df.columns.get_loc("PMID")
+        doi_idx = export_df.columns.get_loc("DOI")
         
-        for row_num, (pmid, doi) in enumerate(zip(df['PMID'], df['DOI']), start=1):
+        for row_num, (pmid, doi) in enumerate(zip(export_df['PMID'], export_df['DOI']), start=1):
             if pmid:
                 worksheet.write_url(row_num, pmid_idx, f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/", string=str(pmid), cell_format=link_fmt)
             if doi:
@@ -141,12 +151,74 @@ def to_excel(df):
         
     return output.getvalue()
 
-st.title("🧬 PubMed Research Scanner")
-st.markdown("Search PubMed, match Journal Quartiles, and download formatted Excel reports.")
+def generate_word_summary(pmid_list):
+    """Fetches abstracts for selected PMIDs and creates a Word doc."""
+    Entrez.email = "pubmed_tool_web@example.com"
+    doc = Document()
+    doc.add_heading('PubMed Article Summaries', level=0)
+    
+    try:
+        # Fetch XML details for abstracts
+        handle = Entrez.efetch(db="pubmed", id=",".join(pmid_list), rettype="abstract", retmode="xml")
+        records = Entrez.read(handle)
+        handle.close()
+        
+        for record in records.get("PubmedArticle", []):
+            citation = record.get("MedlineCitation", {})
+            article = citation.get("Article", {})
+            pmid = citation.get("PMID", "N/A")
+            title = article.get("ArticleTitle", "No title")
+            
+            # Authors
+            authors_list = []
+            for author in article.get("AuthorList", []):
+                if "LastName" in author and "ForeName" in author:
+                    authors_list.append(f"{author['ForeName']} {author['LastName']}")
+            authors_str = ", ".join(authors_list) if authors_list else "No authors listed"
 
+            journal = article.get("Journal", {}).get("Title", "No journal")
+            
+            # Abstract
+            abstract_parts = article.get("Abstract", {}).get("AbstractText", [])
+            abstract_text = " ".join(abstract_parts) if abstract_parts else "No abstract found."
+
+            # Write to Doc
+            doc.add_heading(f"PMID: {pmid}", level=2)
+            
+            p = doc.add_paragraph()
+            p.add_run("Title: ").bold = True
+            p.add_run(title)
+            
+            p = doc.add_paragraph()
+            p.add_run("Authors: ").bold = True
+            p.add_run(authors_str)
+            
+            p = doc.add_paragraph()
+            p.add_run("Journal: ").bold = True
+            p.add_run(journal)
+            
+            p = doc.add_paragraph()
+            p.add_run("Abstract: ").bold = True
+            p.add_run(abstract_text)
+            
+            doc.add_paragraph("_" * 50) # Divider
+
+        # Save to memory buffer
+        doc_buffer = io.BytesIO()
+        doc.save(doc_buffer)
+        return doc_buffer.getvalue()
+
+    except Exception as e:
+        return None
+
+# --- UI Layout ---
+
+st.title("🧬 PubMed Research Scanner")
+st.markdown("Search PubMed, select articles, and download Excel lists or Word summaries.")
+
+# Sidebar
 with st.sidebar:
     st.header("Configuration")
-    
     uploaded_scimago = st.file_uploader("Upload Scimago CSV (Optional)", type=["csv"])
     
     scimago_source = None
@@ -157,26 +229,24 @@ with st.sidebar:
         st.success("✅ Using your uploaded CSV.")
     elif os.path.exists(default_filename):
         scimago_source = default_filename
-        st.info("ℹ️ Using default 'scimago.csv' from repository.")
+        st.info("ℹ️ Using default 'scimago.csv'.")
     else:
-        st.warning("⚠️ No Scimago file found. Quartiles will be 'Unknown'.")
-        st.caption("Upload a file above OR add 'scimago.csv' to your GitHub repo.")
+        st.warning("⚠️ No Scimago file found.")
 
+# Inputs
 col1, col2 = st.columns(2)
-
 with col1:
     kw_or = st.text_input("OR Keywords (e.g. lung cancer, nsclc)")
     kw_and = st.text_input("AND Keywords (e.g. biomarker)")
     study_type = st.multiselect("Study Types", STUDY_TYPES)
-
 with col2:
     start_year = st.text_input("Start Year", value="2020")
     end_year = st.text_input("End Year", value="2025")
     max_results = st.number_input("Max Results", min_value=10, max_value=5000, value=50)
 
+# Build Query
 k_or_list = [x.strip() for x in kw_or.split(",") if x.strip()]
 k_and_list = [x.strip() for x in kw_and.split(",") if x.strip()]
-
 or_part = " OR ".join([f'"{kw}"[Title/Abstract]' for kw in k_or_list])
 and_part = " AND ".join([f'"{kw}"[Title/Abstract]' for kw in k_and_list])
 type_part = " OR ".join([f'"{t}"[Publication Type]' for t in study_type])
@@ -189,48 +259,89 @@ if type_part: parts.append(f"({type_part})")
 parts.append(date_part)
 final_query = " AND ".join(parts)
 
+# Initialize Session State for results
+if 'search_results' not in st.session_state:
+    st.session_state.search_results = pd.DataFrame()
+
+# Search Button
 if st.button("🚀 Start Search", type="primary"):
     with st.spinner("Searching PubMed..."):
         df = search_pubmed(final_query, max_results)
         
         if df.empty:
-            st.warning("No results found. Try broadening your keywords.")
+            st.warning("No results found.")
+            st.session_state.search_results = pd.DataFrame()
         else:
-            st.toast(f"Found {len(df)} articles!", icon="✅")
-            
             if scimago_source:
-                with st.spinner("Matching Quartiles..."):
-                    df = process_quartiles(df, scimago_source)
+                df = process_quartiles(df, scimago_source)
             else:
                 df["Quartile"] = "Unknown (No File)"
-
-            cols = ["PMID", "Quartile", "Title", "First Author", "Journal", "Year", "DOI", "Article Type"]
-            df = df[cols]
-
-            df_display = df.copy()
-            df_display["PMID"] = df_display["PMID"].apply(lambda x: f"https://pubmed.ncbi.nlm.nih.gov/{x}/" if x else None)
-
-            st.dataframe(
-                df_display,
-                column_config={
-                    "PMID": st.column_config.LinkColumn(
-                        label="PMID",
-                        display_text=r"https://pubmed\.ncbi\.nlm\.nih\.gov/(.*?)/"
-                    ),
-                    "DOI": st.column_config.LinkColumn(
-                        label="DOI",
-                        display_text=r"https://doi\.org/(.*)"
-                    )
-                },
-                use_container_width=True,
-                hide_index=True
-            )
-
-            excel_data = to_excel(df)
             
-            st.download_button(
-                label="📥 Download Excel Report",
-                data=excel_data,
-                file_name="PubMed_Results.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            # Reorder cols, putting Select first
+            cols = ["Select", "PMID", "Quartile", "Title", "First Author", "Journal", "Year", "DOI", "Article Type"]
+            df = df[cols]
+            st.session_state.search_results = df
+
+# Display Results & Actions
+if not st.session_state.search_results.empty:
+    st.divider()
+    st.subheader("Search Results")
+    st.caption("Select rows to generate a Word summary.")
+
+    # Interactive Data Editor
+    edited_df = st.data_editor(
+        st.session_state.search_results,
+        column_config={
+            "Select": st.column_config.CheckboxColumn(
+                "Select",
+                help="Select to include in Word Summary",
+                default=False,
+            ),
+            "PMID": st.column_config.LinkColumn(
+                label="PMID",
+                display_text=r"https://pubmed\.ncbi\.nlm\.nih\.gov/(.*?)/"
+            ),
+            "DOI": st.column_config.LinkColumn(
+                label="DOI",
+                display_text=r"https://doi\.org/(.*)"
             )
+        },
+        disabled=["PMID", "Quartile", "Title", "First Author", "Journal", "Year", "DOI", "Article Type"],
+        hide_index=True,
+        use_container_width=True
+    )
+
+    # Action Buttons (Excel & Word)
+    col_d1, col_d2 = st.columns([1, 1])
+
+    with col_d1:
+        # Excel Download
+        excel_data = to_excel(edited_df)
+        st.download_button(
+            label="📥 Download Excel List",
+            data=excel_data,
+            file_name="PubMed_List.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+    with col_d2:
+        # Word Summary Generation
+        selected_rows = edited_df[edited_df["Select"] == True]
+        
+        if not selected_rows.empty:
+            if st.button("📄 Generate Word Summary for Selected"):
+                with st.spinner("Fetching abstracts and generating Word doc..."):
+                    pmids_to_fetch = selected_rows["PMID"].astype(str).tolist()
+                    word_data = generate_word_summary(pmids_to_fetch)
+                    
+                    if word_data:
+                        st.download_button(
+                            label="⬇️ Download Word Summary (.docx)",
+                            data=word_data,
+                            file_name="PubMed_Abstracts_Summary.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        )
+                    else:
+                        st.error("Failed to generate Word document.")
+        else:
+            st.info("Select checkboxes above to enable Word summary generation.")
