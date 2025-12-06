@@ -5,6 +5,7 @@ import re
 import ssl
 import os
 from Bio import Entrez, Medline
+from difflib import get_close_matches
 
 if (not os.environ.get('PYTHONHTTPSVERIFY', '') and
         getattr(ssl, '_create_unverified_context', None)):
@@ -57,13 +58,13 @@ def search_pubmed(query, max_results):
         st.error(f"Error connecting to PubMed: {e}")
         return pd.DataFrame()
 
-def process_quartiles(df, uploaded_file):
-    if uploaded_file is None:
+def process_quartiles(df, file_source):
+    if file_source is None:
         df["Quartile"] = "Unknown (No File)"
         return df
 
     try:
-        sjr = pd.read_csv(uploaded_file, sep=';', quotechar='"', on_bad_lines='warn')
+        sjr = pd.read_csv(file_source, sep=';', quotechar='"', on_bad_lines='warn')
         
         title_col = next((c for c in sjr.columns if c.lower() in ["title", "journal title", "source title"]), None)
         quartile_col = next((c for c in sjr.columns if "quartile" in c.lower()), None)
@@ -74,8 +75,6 @@ def process_quartiles(df, uploaded_file):
 
         sjr["norm_title"] = sjr[title_col].apply(normalize_journal_name)
         quartile_map = dict(zip(sjr["norm_title"], sjr[quartile_col]))
-
-        from difflib import get_close_matches
         
         journal_names_norm = df["Journal"].apply(normalize_journal_name)
         quartiles = []
@@ -103,7 +102,6 @@ def to_excel(df):
         
         link_fmt = workbook.add_format({'font_color': 'blue', 'underline': 1})
         
-        # Add clickable links
         pmid_idx = df.columns.get_loc("PMID")
         doi_idx = df.columns.get_loc("DOI")
         
@@ -122,10 +120,22 @@ st.markdown("Search PubMed, match Journal Quartiles, and download formatted Exce
 
 with st.sidebar:
     st.header("Configuration")
-    scimago_file = st.file_uploader("Upload Scimago CSV (Optional)", type=["csv"])
-    st.info("Download Scimago data from [scimagojr.com](https://www.scimagojr.com/journalrank.php)")
+    
+    uploaded_scimago = st.file_uploader("Upload Scimago CSV (Optional)", type=["csv"])
+    
+    scimago_source = None
+    default_filename = "scimago.csv"
+    
+    if uploaded_scimago is not None:
+        scimago_source = uploaded_scimago
+        st.success("✅ Using your uploaded CSV.")
+    elif os.path.exists(default_filename):
+        scimago_source = default_filename
+        st.info("ℹ️ Using default 'scimago.csv' from repository.")
+    else:
+        st.warning("⚠️ No Scimago file found. Quartiles will be 'Unknown'.")
+        st.caption("Upload a file above OR add 'scimago.csv' to your GitHub repo.")
 
-# Main Search Area
 col1, col2 = st.columns(2)
 
 with col1:
@@ -138,7 +148,6 @@ with col2:
     end_year = st.text_input("End Year", value="2025")
     max_results = st.number_input("Max Results", min_value=10, max_value=5000, value=50)
 
-# Build Query
 k_or_list = [x.strip() for x in kw_or.split(",") if x.strip()]
 k_and_list = [x.strip() for x in kw_and.split(",") if x.strip()]
 s_type_list = [x.strip() for x in study_type.split(",") if x.strip()]
@@ -155,7 +164,6 @@ if type_part: parts.append(f"({type_part})")
 parts.append(date_part)
 final_query = " AND ".join(parts)
 
-# Action Button
 if st.button("🚀 Start Search", type="primary"):
     with st.spinner("Searching PubMed..."):
         df = search_pubmed(final_query, max_results)
@@ -163,19 +171,21 @@ if st.button("🚀 Start Search", type="primary"):
         if df.empty:
             st.warning("No results found. Try broadening your keywords.")
         else:
-            st.success(f"Found {len(df)} articles.")
+            st.toast(f"Found {len(df)} articles!", icon="✅")
             
-            if scimago_file:
+            if scimago_source:
                 with st.spinner("Matching Quartiles..."):
-                    df = process_quartiles(df, scimago_file)
+                    df = process_quartiles(df, scimago_source)
             else:
                 df["Quartile"] = "Unknown (No File)"
 
             cols = ["PMID", "Quartile", "Title", "First Author", "Journal", "Year", "DOI", "Article Type"]
             df = df[cols]
+
             st.dataframe(df, use_container_width=True)
+
             excel_data = to_excel(df)
-          
+            
             st.download_button(
                 label="📥 Download Excel Report",
                 data=excel_data,
