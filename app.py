@@ -13,7 +13,7 @@ if (not os.environ.get('PYTHONHTTPSVERIFY', '') and
         getattr(ssl, '_create_unverified_context', None)):
     ssl._create_default_https_context = ssl._create_unverified_context
 
-st.set_page_config(page_title="PubMed Web Scanner", page_icon="🧬", layout="wide")
+st.set_page_config(page_title="PubMed Web Scanner by RTOmega", page_icon="🧬", layout="wide")
 
 # --- Constants ---
 STUDY_TYPES = [
@@ -146,8 +146,6 @@ def to_excel(df):
         
         for row_num, (pmid_url, doi_url) in enumerate(zip(export_df['PMID'], export_df['DOI']), start=1):
             if pmid_url:
-                # Extract simple ID from URL for display text
-                # URL is like: https://pubmed.ncbi.nlm.nih.gov/123456/
                 try:
                     display_id = pmid_url.strip("/").split("/")[-1]
                 except:
@@ -172,7 +170,6 @@ def generate_word_summary(pmid_urls):
     clean_ids = []
     for url in pmid_urls:
         if url and "pubmed" in url:
-            # Split https://pubmed.ncbi.nlm.nih.gov/123456/ -> 123456
             parts = url.strip("/").split("/")
             if parts:
                 clean_ids.append(parts[-1])
@@ -232,8 +229,16 @@ def generate_word_summary(pmid_urls):
 
 # --- UI Layout ---
 
-st.title("🧬 PubMed Research Scanner")
-st.markdown("Search PubMed, select articles, and download Excel lists or Word summaries.")
+# Split Header into Title and Tutorial Button
+col_header, col_tutorial = st.columns([7, 1]) # Adjust ratio to move button
+
+with col_header:
+    st.title("🧬 PubMed Research Scanner")
+    st.markdown("Search PubMed, select articles, and download Excel lists or Word summaries.")
+
+with col_tutorial:
+    # REPLACE THE LINK BELOW WITH YOUR YOUTUBE VIDEO LINK
+    st.link_button("Turkish Video Tutorial", "https://www.youtube.com/watch?v=KvsBj1QGqso")
 
 with st.sidebar:
     st.header("Configuration")
@@ -308,7 +313,6 @@ if not st.session_state.search_results.empty:
                 help="Select to include in Word Summary",
                 default=False,
             ),
-            # This Regex extracts the ID from the Full URL for display
             "PMID": st.column_config.LinkColumn(
                 label="PMID",
                 display_text=r"https://pubmed\.ncbi\.nlm\.nih\.gov/(.*?)/"
@@ -340,7 +344,6 @@ if not st.session_state.search_results.empty:
         if not selected_rows.empty:
             if st.button("📄 Generate Word Summary for Selected"):
                 with st.spinner("Fetching abstracts and generating Word doc..."):
-                    # Pass the URLs, the function cleans them
                     pmid_urls = selected_rows["PMID"].astype(str).tolist()
                     word_data = generate_word_summary(pmid_urls)
                     
