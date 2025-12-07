@@ -5,7 +5,7 @@ import re
 import ssl
 import os
 from Bio import Entrez, Medline
-from docx import Document # New import for Word generation
+from docx import Document
 from difflib import get_close_matches
 
 # --- SSL Fix ---
@@ -13,9 +13,9 @@ if (not os.environ.get('PYTHONHTTPSVERIFY', '') and
         getattr(ssl, '_create_unverified_context', None)):
     ssl._create_default_https_context = ssl._create_unverified_context
 
-st.set_page_config(page_title="PubMed Web Scanner by RTOmega", page_icon="🧬", layout="wide")
+st.set_page_config(page_title="PubMed Web Scanner", page_icon="🧬", layout="wide")
 
-# --- Study Types List ---
+# --- Constants ---
 STUDY_TYPES = [
     "Adaptive Clinical Trial", "Address", "Autobiography", "Bibliography", "Biography", 
     "Books and Documents", "Case Reports", "Classical Article", "Clinical Conference", 
@@ -63,21 +63,25 @@ def search_pubmed(query, max_results):
         if not ids:
             return pd.DataFrame()
 
-        # Initial fetch for the table list (Medline format is faster/lighter)
         handle = Entrez.efetch(db="pubmed", id=",".join(ids), rettype="medline", retmode="text")
         records = Medline.parse(handle)
         
         articles = []
         for r in records:
+            # Handle DOI
             doi_raw = r.get("LID", r.get("AID", ""))
             doi_link = ""
             if doi_raw and "[doi]" in doi_raw:
                 clean_doi = doi_raw.split(' ')[0]
                 doi_link = f"https://doi.org/{clean_doi}"
 
+            # Handle PMID (Convert to FULL URL for LinkColumn to work)
+            pmid = r.get("PMID", "")
+            pmid_link = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/" if pmid else ""
+
             articles.append({
-                "Select": False, # Add Checkbox column
-                "PMID": r.get("PMID", ""),
+                "Select": False,
+                "PMID": pmid_link, # Store URL, display ID later
                 "Title": r.get("TI", ""),
                 "First Author": r.get("AU", ["N/A"])[0],
                 "Journal": r.get("JT", ""),
@@ -128,7 +132,6 @@ def process_quartiles(df, file_source):
 
 def to_excel(df):
     output = io.BytesIO()
-    # Remove 'Select' column for Excel export
     export_df = df.drop(columns=['Select'], errors='ignore')
     
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -141,25 +144,44 @@ def to_excel(df):
         pmid_idx = export_df.columns.get_loc("PMID")
         doi_idx = export_df.columns.get_loc("DOI")
         
-        for row_num, (pmid, doi) in enumerate(zip(export_df['PMID'], export_df['DOI']), start=1):
-            if pmid:
-                worksheet.write_url(row_num, pmid_idx, f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/", string=str(pmid), cell_format=link_fmt)
-            if doi:
-                worksheet.write_url(row_num, doi_idx, doi, string="DOI Link", cell_format=link_fmt)
+        for row_num, (pmid_url, doi_url) in enumerate(zip(export_df['PMID'], export_df['DOI']), start=1):
+            if pmid_url:
+                # Extract simple ID from URL for display text
+                # URL is like: https://pubmed.ncbi.nlm.nih.gov/123456/
+                try:
+                    display_id = pmid_url.strip("/").split("/")[-1]
+                except:
+                    display_id = "Link"
+                worksheet.write_url(row_num, pmid_idx, pmid_url, string=display_id, cell_format=link_fmt)
+            
+            if doi_url:
+                display_doi = doi_url.replace("https://doi.org/", "")
+                worksheet.write_url(row_num, doi_idx, doi_url, string=display_doi, cell_format=link_fmt)
                 
         worksheet.autofit()
         
     return output.getvalue()
 
-def generate_word_summary(pmid_list):
-    """Fetches abstracts for selected PMIDs and creates a Word doc."""
+def generate_word_summary(pmid_urls):
+    """Fetches abstracts for selected PMIDs (passed as URLs) and creates a Word doc."""
     Entrez.email = "pubmed_tool_web@example.com"
     doc = Document()
     doc.add_heading('PubMed Article Summaries', level=0)
     
+    # Extract IDs from URLs
+    clean_ids = []
+    for url in pmid_urls:
+        if url and "pubmed" in url:
+            # Split https://pubmed.ncbi.nlm.nih.gov/123456/ -> 123456
+            parts = url.strip("/").split("/")
+            if parts:
+                clean_ids.append(parts[-1])
+    
+    if not clean_ids:
+        return None
+
     try:
-        # Fetch XML details for abstracts
-        handle = Entrez.efetch(db="pubmed", id=",".join(pmid_list), rettype="abstract", retmode="xml")
+        handle = Entrez.efetch(db="pubmed", id=",".join(clean_ids), rettype="abstract", retmode="xml")
         records = Entrez.read(handle)
         handle.close()
         
@@ -169,7 +191,6 @@ def generate_word_summary(pmid_list):
             pmid = citation.get("PMID", "N/A")
             title = article.get("ArticleTitle", "No title")
             
-            # Authors
             authors_list = []
             for author in article.get("AuthorList", []):
                 if "LastName" in author and "ForeName" in author:
@@ -178,11 +199,9 @@ def generate_word_summary(pmid_list):
 
             journal = article.get("Journal", {}).get("Title", "No journal")
             
-            # Abstract
             abstract_parts = article.get("Abstract", {}).get("AbstractText", [])
             abstract_text = " ".join(abstract_parts) if abstract_parts else "No abstract found."
 
-            # Write to Doc
             doc.add_heading(f"PMID: {pmid}", level=2)
             
             p = doc.add_paragraph()
@@ -201,14 +220,14 @@ def generate_word_summary(pmid_list):
             p.add_run("Abstract: ").bold = True
             p.add_run(abstract_text)
             
-            doc.add_paragraph("_" * 50) # Divider
+            doc.add_paragraph("_" * 50) 
 
-        # Save to memory buffer
         doc_buffer = io.BytesIO()
         doc.save(doc_buffer)
         return doc_buffer.getvalue()
 
     except Exception as e:
+        print(e)
         return None
 
 # --- UI Layout ---
@@ -216,7 +235,6 @@ def generate_word_summary(pmid_list):
 st.title("🧬 PubMed Research Scanner")
 st.markdown("Search PubMed, select articles, and download Excel lists or Word summaries.")
 
-# Sidebar
 with st.sidebar:
     st.header("Configuration")
     uploaded_scimago = st.file_uploader("Upload Scimago CSV (Optional)", type=["csv"])
@@ -233,7 +251,6 @@ with st.sidebar:
     else:
         st.warning("⚠️ No Scimago file found.")
 
-# Inputs
 col1, col2 = st.columns(2)
 with col1:
     kw_or = st.text_input("OR Keywords (e.g. lung cancer, nsclc)")
@@ -244,7 +261,6 @@ with col2:
     end_year = st.text_input("End Year", value="2025")
     max_results = st.number_input("Max Results", min_value=10, max_value=5000, value=50)
 
-# Build Query
 k_or_list = [x.strip() for x in kw_or.split(",") if x.strip()]
 k_and_list = [x.strip() for x in kw_and.split(",") if x.strip()]
 or_part = " OR ".join([f'"{kw}"[Title/Abstract]' for kw in k_or_list])
@@ -259,11 +275,9 @@ if type_part: parts.append(f"({type_part})")
 parts.append(date_part)
 final_query = " AND ".join(parts)
 
-# Initialize Session State for results
 if 'search_results' not in st.session_state:
     st.session_state.search_results = pd.DataFrame()
 
-# Search Button
 if st.button("🚀 Start Search", type="primary"):
     with st.spinner("Searching PubMed..."):
         df = search_pubmed(final_query, max_results)
@@ -277,18 +291,15 @@ if st.button("🚀 Start Search", type="primary"):
             else:
                 df["Quartile"] = "Unknown (No File)"
             
-            # Reorder cols, putting Select first
             cols = ["Select", "PMID", "Quartile", "Title", "First Author", "Journal", "Year", "DOI", "Article Type"]
             df = df[cols]
             st.session_state.search_results = df
 
-# Display Results & Actions
 if not st.session_state.search_results.empty:
     st.divider()
     st.subheader("Search Results")
     st.caption("Select rows to generate a Word summary.")
 
-    # Interactive Data Editor
     edited_df = st.data_editor(
         st.session_state.search_results,
         column_config={
@@ -297,6 +308,7 @@ if not st.session_state.search_results.empty:
                 help="Select to include in Word Summary",
                 default=False,
             ),
+            # This Regex extracts the ID from the Full URL for display
             "PMID": st.column_config.LinkColumn(
                 label="PMID",
                 display_text=r"https://pubmed\.ncbi\.nlm\.nih\.gov/(.*?)/"
@@ -311,11 +323,9 @@ if not st.session_state.search_results.empty:
         use_container_width=True
     )
 
-    # Action Buttons (Excel & Word)
     col_d1, col_d2 = st.columns([1, 1])
 
     with col_d1:
-        # Excel Download
         excel_data = to_excel(edited_df)
         st.download_button(
             label="📥 Download Excel List",
@@ -325,14 +335,14 @@ if not st.session_state.search_results.empty:
         )
 
     with col_d2:
-        # Word Summary Generation
         selected_rows = edited_df[edited_df["Select"] == True]
         
         if not selected_rows.empty:
             if st.button("📄 Generate Word Summary for Selected"):
                 with st.spinner("Fetching abstracts and generating Word doc..."):
-                    pmids_to_fetch = selected_rows["PMID"].astype(str).tolist()
-                    word_data = generate_word_summary(pmids_to_fetch)
+                    # Pass the URLs, the function cleans them
+                    pmid_urls = selected_rows["PMID"].astype(str).tolist()
+                    word_data = generate_word_summary(pmid_urls)
                     
                     if word_data:
                         st.download_button(
