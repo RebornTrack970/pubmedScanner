@@ -8,14 +8,12 @@ from Bio import Entrez, Medline
 from docx import Document
 from difflib import get_close_matches
 
-# --- SSL Fix ---
 if (not os.environ.get('PYTHONHTTPSVERIFY', '') and
         getattr(ssl, '_create_unverified_context', None)):
     ssl._create_default_https_context = ssl._create_unverified_context
 
 st.set_page_config(page_title="PubMed Web Scanner by RTOmega", page_icon="🧬", layout="wide")
 
-# --- Constants ---
 STUDY_TYPES = [
     "Adaptive Clinical Trial", "Address", "Autobiography", "Bibliography", "Biography", 
     "Books and Documents", "Case Reports", "Classical Article", "Clinical Conference", 
@@ -41,8 +39,6 @@ STUDY_TYPES = [
     "Scoping Review", "Systematic Review", "Technical Report", "Twin Study", 
     "Validation Study", "Video-Audio Media", "Webcast"
 ]
-
-# --- Helper Functions ---
 
 def normalize_journal_name(name):
     if not isinstance(name, str):
@@ -227,9 +223,6 @@ def generate_word_summary(pmid_urls):
         print(e)
         return None
 
-# --- UI Layout ---
-
-# Split Header into Title and Tutorial Button
 col_header, col_tutorial = st.columns([7, 1]) # Adjust ratio to move button
 
 with col_header:
@@ -237,7 +230,6 @@ with col_header:
     st.markdown("Search PubMed, select articles, and download Excel lists or Word summaries.")
 
 with col_tutorial:
-    # REPLACE THE LINK BELOW WITH YOUR YOUTUBE VIDEO LINK
     st.link_button("Turkish Video Tutorial", "https://www.youtube.com/watch?v=KvsBj1QGqso")
 
 with st.sidebar:
@@ -283,7 +275,7 @@ final_query = " AND ".join(parts)
 if 'search_results' not in st.session_state:
     st.session_state.search_results = pd.DataFrame()
 
-if st.button("🚀 Start Search", type="primary"):
+if st.button("🔎 Start Search", type="primary"):
     with st.spinner("Searching PubMed..."):
         df = search_pubmed(final_query, max_results)
         
