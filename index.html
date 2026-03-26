@@ -1,0 +1,941 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PubMed Web Scanner by RTOmega</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧬</text></svg>">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <script src="https://unpkg.com/docx@8.5.0/build/index.umd.js"></script>
+    <style>
+        :root {
+            --primary: #4f46e5;
+            --primary-hover: #4338ca;
+            --bg: #f8fafc;
+            --card: #ffffff;
+            --border: #e2e8f0;
+            --text: #1e293b;
+            --text-muted: #64748b;
+            --success: #16a34a;
+            --warning: #d97706;
+            --error: #dc2626;
+            --info: #2563eb;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+        }
+
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        header h1 { font-size: 1.8rem; }
+        header h1 span { margin-right: 8px; }
+
+        .subtitle { color: var(--text-muted); font-size: 0.95rem; margin-top: 4px; }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+        }
+
+        .btn-primary { background: var(--primary); color: #fff; }
+        .btn-primary:hover { background: var(--primary-hover); }
+        .btn-primary:disabled { background: #94a3b8; cursor: not-allowed; }
+
+        .btn-success { background: var(--success); color: #fff; }
+        .btn-success:hover { background: #15803d; }
+
+        .btn-outline {
+            background: transparent;
+            color: var(--primary);
+            border: 2px solid var(--primary);
+        }
+        .btn-outline:hover { background: var(--primary); color: #fff; }
+
+        .btn-link {
+            background: transparent;
+            color: var(--primary);
+            padding: 10px 16px;
+            text-decoration: underline;
+        }
+
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+
+        .card h2 {
+            font-size: 1.1rem;
+            margin-bottom: 16px;
+            color: var(--text);
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+
+        @media (max-width: 768px) {
+            .form-grid { grid-template-columns: 1fr; }
+        }
+
+        .form-group { margin-bottom: 12px; }
+
+        .form-group label {
+            display: block;
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-bottom: 4px;
+            color: var(--text-muted);
+        }
+
+        .form-group input[type="text"],
+        .form-group input[type="number"] {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 0.9rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .form-group input:focus { border-color: var(--primary); }
+
+        .file-upload {
+            border: 2px dashed var(--border);
+            border-radius: 8px;
+            padding: 16px;
+            text-align: center;
+            cursor: pointer;
+            transition: border-color 0.2s;
+            position: relative;
+        }
+
+        .file-upload:hover { border-color: var(--primary); }
+
+        .file-upload input {
+            position: absolute;
+            inset: 0;
+            opacity: 0;
+            cursor: pointer;
+        }
+
+        .file-upload-text { font-size: 0.85rem; color: var(--text-muted); }
+
+        .alert {
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            margin-top: 8px;
+        }
+
+        .alert-info { background: #eff6ff; color: var(--info); }
+        .alert-success { background: #f0fdf4; color: var(--success); }
+        .alert-warning { background: #fffbeb; color: var(--warning); }
+
+        /* Multiselect */
+        .multiselect-wrapper { position: relative; }
+
+        .multiselect-trigger {
+            width: 100%;
+            min-height: 42px;
+            padding: 8px 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 0.85rem;
+            cursor: pointer;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            align-items: center;
+            background: #fff;
+        }
+
+        .multiselect-trigger:focus-within { border-color: var(--primary); }
+
+        .multiselect-tag {
+            background: #e0e7ff;
+            color: var(--primary);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .multiselect-tag .remove {
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 0.9rem;
+        }
+
+        .multiselect-dropdown {
+            display: none;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            max-height: 250px;
+            overflow-y: auto;
+            background: #fff;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            z-index: 100;
+            margin-top: 4px;
+        }
+
+        .multiselect-dropdown.open { display: block; }
+
+        .multiselect-search {
+            width: 100%;
+            padding: 10px 12px;
+            border: none;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.85rem;
+            outline: none;
+        }
+
+        .multiselect-option {
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: background 0.1s;
+        }
+
+        .multiselect-option:hover { background: #f1f5f9; }
+        .multiselect-option.selected { background: #e0e7ff; }
+
+        /* Results Table */
+        .results-section { display: none; }
+        .results-section.visible { display: block; }
+
+        .table-container {
+            overflow-x: auto;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+
+        th {
+            background: #f1f5f9;
+            padding: 12px 14px;
+            text-align: left;
+            font-weight: 600;
+            color: var(--text-muted);
+            white-space: nowrap;
+            border-bottom: 2px solid var(--border);
+            position: sticky;
+            top: 0;
+        }
+
+        td {
+            padding: 10px 14px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: top;
+        }
+
+        tr:hover td { background: #f8fafc; }
+
+        td a { color: var(--primary); text-decoration: none; }
+        td a:hover { text-decoration: underline; }
+
+        td input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }
+
+        .actions-bar {
+            display: flex;
+            gap: 12px;
+            margin-top: 16px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .result-count {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+        }
+
+        .spinner {
+            display: none;
+            width: 20px;
+            height: 20px;
+            border: 3px solid var(--border);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            margin-left: 8px;
+        }
+
+        .spinner.active { display: inline-block; }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .loading-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(255,255,255,0.8);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .loading-overlay.active { display: flex; }
+
+        .loading-overlay .spinner {
+            display: inline-block;
+            width: 40px;
+            height: 40px;
+        }
+
+        .select-all-label {
+            font-size: 0.8rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        footer {
+            text-align: center;
+            padding: 20px;
+            color: var(--text-muted);
+            font-size: 0.8rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="spinner"></div>
+        <div id="loadingText">Searching PubMed...</div>
+    </div>
+
+    <div class="container">
+        <header>
+            <div>
+                <h1><span>🧬</span> PubMed Research Scanner</h1>
+                <p class="subtitle">Search PubMed, select articles, and download Excel lists or Word summaries.</p>
+            </div>
+            <a href="https://www.youtube.com/watch?v=KvsBj1QGqso" target="_blank" class="btn btn-outline">
+                Turkish Video Tutorial
+            </a>
+        </header>
+
+        <!-- Config Card -->
+        <div class="card">
+            <h2>Configuration</h2>
+            <div class="form-group">
+                <label>Upload Scimago CSV (Optional - for journal quartile lookup)</label>
+                <div class="file-upload" id="fileUploadArea">
+                    <input type="file" id="scimagoFile" accept=".csv">
+                    <div class="file-upload-text" id="fileUploadText">
+                        Click or drag a Scimago CSV file here
+                    </div>
+                </div>
+                <div id="scimagoStatus"></div>
+            </div>
+        </div>
+
+        <!-- Search Card -->
+        <div class="card">
+            <h2>Search Parameters</h2>
+            <div class="form-grid">
+                <div>
+                    <div class="form-group">
+                        <label>OR Keywords (e.g. lung cancer, nsclc)</label>
+                        <input type="text" id="kwOr" placeholder="lung cancer, nsclc">
+                    </div>
+                    <div class="form-group">
+                        <label>AND Keywords (e.g. biomarker)</label>
+                        <input type="text" id="kwAnd" placeholder="biomarker">
+                    </div>
+                    <div class="form-group">
+                        <label>Study Types</label>
+                        <div class="multiselect-wrapper" id="studyTypeWrapper">
+                            <div class="multiselect-trigger" id="studyTypeTrigger">
+                                <span class="multiselect-placeholder" style="color: var(--text-muted)">Select study types...</span>
+                            </div>
+                            <div class="multiselect-dropdown" id="studyTypeDropdown">
+                                <input type="text" class="multiselect-search" id="studyTypeSearch" placeholder="Search study types...">
+                                <div id="studyTypeOptions"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div>
+                    <div class="form-group">
+                        <label>Start Year</label>
+                        <input type="text" id="startYear" value="2020">
+                    </div>
+                    <div class="form-group">
+                        <label>End Year</label>
+                        <input type="text" id="endYear" value="2025">
+                    </div>
+                    <div class="form-group">
+                        <label>Max Results (10-5000)</label>
+                        <input type="number" id="maxResults" value="50" min="10" max="5000">
+                    </div>
+                </div>
+            </div>
+            <div style="margin-top: 16px;">
+                <button class="btn btn-primary" id="searchBtn" onclick="startSearch()">
+                    🔎 Start Search
+                </button>
+                <span class="spinner" id="searchSpinner"></span>
+            </div>
+        </div>
+
+        <!-- Results -->
+        <div class="results-section" id="resultsSection">
+            <div class="card">
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                    <h2>Search Results</h2>
+                    <span class="result-count" id="resultCount"></span>
+                </div>
+                <p class="subtitle" style="margin-bottom: 12px;">Select rows to generate a Word summary.</p>
+
+                <div class="table-container" style="max-height: 600px; overflow-y: auto;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th><label class="select-all-label"><input type="checkbox" id="selectAll" onchange="toggleSelectAll()"> All</label></th>
+                                <th>PMID</th>
+                                <th>Quartile</th>
+                                <th>Title</th>
+                                <th>First Author</th>
+                                <th>Journal</th>
+                                <th>Year</th>
+                                <th>DOI</th>
+                                <th>Article Type</th>
+                            </tr>
+                        </thead>
+                        <tbody id="resultsBody"></tbody>
+                    </table>
+                </div>
+
+                <div class="actions-bar">
+                    <button class="btn btn-success" onclick="downloadExcel()">📥 Download Excel List</button>
+                    <button class="btn btn-primary" onclick="generateWordSummary()">📄 Generate Word Summary for Selected</button>
+                    <span class="spinner" id="wordSpinner"></span>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            PubMed Web Scanner by RTOmega &mdash; Data from <a href="https://pubmed.ncbi.nlm.nih.gov/" target="_blank">NCBI PubMed</a>
+        </footer>
+    </div>
+
+    <script>
+    // Study types list
+    const STUDY_TYPES = [
+        "Adaptive Clinical Trial","Address","Autobiography","Bibliography","Biography",
+        "Books and Documents","Case Reports","Classical Article","Clinical Conference",
+        "Clinical Study","Clinical Trial","Clinical Trial Protocol","Clinical Trial, Phase I",
+        "Clinical Trial, Phase II","Clinical Trial, Phase III","Clinical Trial, Phase IV",
+        "Clinical Trial, Veterinary","Collected Work","Comment","Comparative Study",
+        "Congress","Consensus Development Conference","Consensus Development Conference, NIH",
+        "Controlled Clinical Trial","Corrected and Republished Article","Dataset","Dictionary",
+        "Directory","Duplicate Publication","Editorial","Electronic Supplementary Materials",
+        "English Abstract","Equivalence Trial","Evaluation Study","Expression of Concern",
+        "Festschrift","Government Publication","Guideline","Historical Article",
+        "Interactive Tutorial","Interview","Introductory Journal Article","Lecture",
+        "Legal Case","Legislation","Letter","Meta-Analysis","Multicenter Study",
+        "Network Meta-Analysis","News","Newspaper Article","Observational Study",
+        "Observational Study, Veterinary","Overall","Patient Education Handout",
+        "Periodical Index","Personal Narrative","Portrait","Practice Guideline",
+        "Pragmatic Clinical Trial","Preprint","Published Erratum","Randomized Controlled Trial",
+        "Randomized Controlled Trial, Veterinary","Research Support, American Recovery and Reinvestment Act",
+        "Research Support, N.I.H., Extramural","Research Support, N.I.H., Intramural",
+        "Research Support, Non-U.S. Gov't","Research Support, U.S. Gov't, Non-P.H.S.",
+        "Research Support, U.S. Gov't, P.H.S.","Research Support, U.S. Gov't",
+        "Retracted Publication","Retraction of Publication","Review","Scientific Integrity Review",
+        "Scoping Review","Systematic Review","Technical Report","Twin Study",
+        "Validation Study","Video-Audio Media","Webcast"
+    ];
+
+    let selectedStudyTypes = [];
+    let scimagoData = null;
+    let searchResults = [];
+
+    // ==================== Multiselect ====================
+    const trigger = document.getElementById('studyTypeTrigger');
+    const dropdown = document.getElementById('studyTypeDropdown');
+    const optionsContainer = document.getElementById('studyTypeOptions');
+    const searchInput = document.getElementById('studyTypeSearch');
+
+    function renderOptions(filter = '') {
+        const lower = filter.toLowerCase();
+        optionsContainer.innerHTML = '';
+        STUDY_TYPES.filter(t => t.toLowerCase().includes(lower)).forEach(type => {
+            const div = document.createElement('div');
+            div.className = 'multiselect-option' + (selectedStudyTypes.includes(type) ? ' selected' : '');
+            div.textContent = type;
+            div.onclick = () => toggleStudyType(type);
+            optionsContainer.appendChild(div);
+        });
+    }
+
+    function toggleStudyType(type) {
+        const idx = selectedStudyTypes.indexOf(type);
+        if (idx >= 0) selectedStudyTypes.splice(idx, 1);
+        else selectedStudyTypes.push(type);
+        renderTrigger();
+        renderOptions(searchInput.value);
+    }
+
+    function renderTrigger() {
+        trigger.innerHTML = '';
+        if (selectedStudyTypes.length === 0) {
+            trigger.innerHTML = '<span style="color: var(--text-muted)">Select study types...</span>';
+            return;
+        }
+        selectedStudyTypes.forEach(type => {
+            const tag = document.createElement('span');
+            tag.className = 'multiselect-tag';
+            tag.innerHTML = `${type} <span class="remove" onclick="event.stopPropagation(); toggleStudyType('${type.replace(/'/g, "\\'")}')">&times;</span>`;
+            trigger.appendChild(tag);
+        });
+    }
+
+    trigger.onclick = () => {
+        dropdown.classList.toggle('open');
+        if (dropdown.classList.contains('open')) searchInput.focus();
+    };
+
+    searchInput.oninput = () => renderOptions(searchInput.value);
+
+    document.addEventListener('click', (e) => {
+        if (!document.getElementById('studyTypeWrapper').contains(e.target)) {
+            dropdown.classList.remove('open');
+        }
+    });
+
+    renderOptions();
+
+    // ==================== Scimago ====================
+    document.getElementById('scimagoFile').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        document.getElementById('fileUploadText').textContent = file.name;
+
+        Papa.parse(file, {
+            header: true,
+            delimiter: ';',
+            skipEmptyLines: true,
+            complete: function(results) {
+                const cols = results.meta.fields;
+                const titleCol = cols.find(c => ['title','journal title','source title'].includes(c.toLowerCase()));
+                const quartileCol = cols.find(c => c.toLowerCase().includes('quartile'));
+
+                if (!titleCol || !quartileCol) {
+                    document.getElementById('scimagoStatus').innerHTML =
+                        '<div class="alert alert-warning">Could not find Title or Quartile columns in CSV.</div>';
+                    scimagoData = null;
+                    return;
+                }
+
+                scimagoData = {};
+                results.data.forEach(row => {
+                    const name = normalizeJournalName(row[titleCol]);
+                    if (name) scimagoData[name] = row[quartileCol] || 'Unknown';
+                });
+
+                document.getElementById('scimagoStatus').innerHTML =
+                    `<div class="alert alert-success">Loaded ${Object.keys(scimagoData).length} journals from CSV.</div>`;
+            }
+        });
+    });
+
+    function normalizeJournalName(name) {
+        if (!name || typeof name !== 'string') return '';
+        return name.toLowerCase().replace(/\bthe\b/g, '').replace(/[^a-z0-9 ]+/g, ' ').trim();
+    }
+
+    function findQuartile(journalName) {
+        if (!scimagoData) return 'Unknown (No File)';
+        const norm = normalizeJournalName(journalName);
+        if (scimagoData[norm]) return scimagoData[norm];
+
+        // Simple fuzzy match
+        const keys = Object.keys(scimagoData);
+        let bestMatch = null;
+        let bestScore = 0;
+        for (const key of keys) {
+            const score = similarity(norm, key);
+            if (score > bestScore && score > 0.8) {
+                bestScore = score;
+                bestMatch = key;
+            }
+        }
+        return bestMatch ? scimagoData[bestMatch] : 'Unknown';
+    }
+
+    function similarity(a, b) {
+        if (a === b) return 1;
+        const longer = a.length > b.length ? a : b;
+        const shorter = a.length > b.length ? b : a;
+        if (longer.length === 0) return 1;
+        const editDist = levenshtein(longer, shorter);
+        return (longer.length - editDist) / longer.length;
+    }
+
+    function levenshtein(a, b) {
+        const matrix = [];
+        for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+        for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+        for (let i = 1; i <= b.length; i++) {
+            for (let j = 1; j <= a.length; j++) {
+                matrix[i][j] = b[i-1] === a[j-1]
+                    ? matrix[i-1][j-1]
+                    : Math.min(matrix[i-1][j-1]+1, matrix[i][j-1]+1, matrix[i-1][j]+1);
+            }
+        }
+        return matrix[b.length][a.length];
+    }
+
+    // ==================== PubMed Search ====================
+    function buildQuery() {
+        const kwOr = document.getElementById('kwOr').value;
+        const kwAnd = document.getElementById('kwAnd').value;
+        const startYear = document.getElementById('startYear').value;
+        const endYear = document.getElementById('endYear').value;
+
+        const orList = kwOr.split(',').map(s => s.trim()).filter(Boolean);
+        const andList = kwAnd.split(',').map(s => s.trim()).filter(Boolean);
+
+        const orPart = orList.map(kw => `"${kw}"[Title/Abstract]`).join(' OR ');
+        const andPart = andList.map(kw => `"${kw}"[Title/Abstract]`).join(' AND ');
+        const typePart = selectedStudyTypes.map(t => `"${t}"[Publication Type]`).join(' OR ');
+        const datePart = `("${startYear}"[Date - Publication] : "${endYear}"[Date - Publication])`;
+
+        const parts = [];
+        if (orPart) parts.push(`(${orPart})`);
+        if (andPart) parts.push(`(${andPart})`);
+        if (typePart) parts.push(`(${typePart})`);
+        parts.push(datePart);
+
+        return parts.join(' AND ');
+    }
+
+    async function startSearch() {
+        const query = buildQuery();
+        const maxResults = parseInt(document.getElementById('maxResults').value) || 50;
+
+        const btn = document.getElementById('searchBtn');
+        btn.disabled = true;
+        document.getElementById('loadingOverlay').classList.add('active');
+        document.getElementById('loadingText').textContent = 'Searching PubMed...';
+
+        try {
+            // Step 1: esearch
+            const searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(query)}&retmax=${maxResults}&retmode=json`;
+            const searchResp = await fetch(searchUrl);
+            const searchData = await searchResp.json();
+            const ids = searchData.esearchresult?.idlist || [];
+
+            if (ids.length === 0) {
+                alert('No results found.');
+                return;
+            }
+
+            document.getElementById('loadingText').textContent = `Fetching ${ids.length} articles...`;
+
+            // Step 2: efetch in batches
+            const articles = [];
+            const batchSize = 200;
+            for (let i = 0; i < ids.length; i += batchSize) {
+                const batch = ids.slice(i, i + batchSize);
+                const fetchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=${batch.join(',')}&retmode=xml`;
+                const fetchResp = await fetch(fetchUrl);
+                const xmlText = await fetchResp.text();
+                const parser = new DOMParser();
+                const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
+
+                const pubArticles = xmlDoc.querySelectorAll('PubmedArticle');
+                pubArticles.forEach(pa => {
+                    const citation = pa.querySelector('MedlineCitation');
+                    const article = citation?.querySelector('Article');
+
+                    const pmid = citation?.querySelector('PMID')?.textContent || '';
+                    const title = article?.querySelector('ArticleTitle')?.textContent || '';
+
+                    // First author
+                    const authorNode = article?.querySelector('AuthorList Author');
+                    let firstAuthor = 'N/A';
+                    if (authorNode) {
+                        const last = authorNode.querySelector('LastName')?.textContent || '';
+                        const fore = authorNode.querySelector('ForeName')?.textContent || '';
+                        if (last) firstAuthor = fore ? `${last} ${fore[0]}` : last;
+                    }
+
+                    const journal = article?.querySelector('Journal Title')?.textContent
+                        || article?.querySelector('Title')?.textContent || '';
+                    // Try MedlineJournalInfo > MedlineTA as fallback
+                    const journalName = journal
+                        || citation?.querySelector('MedlineJournalInfo MedlineTA')?.textContent || '';
+
+                    // Year
+                    const year = article?.querySelector('Journal JournalIssue PubDate Year')?.textContent
+                        || article?.querySelector('Journal JournalIssue PubDate MedlineDate')?.textContent?.substring(0, 4) || '';
+
+                    // DOI
+                    let doi = '';
+                    const elocations = article?.querySelectorAll('ELocationID');
+                    elocations?.forEach(el => {
+                        if (el.getAttribute('EIdType') === 'doi') {
+                            doi = `https://doi.org/${el.textContent}`;
+                        }
+                    });
+
+                    // Article types
+                    const ptNodes = article?.querySelectorAll('PublicationTypeList PublicationType');
+                    const types = [];
+                    ptNodes?.forEach(pt => types.push(pt.textContent));
+
+                    const quartile = findQuartile(journalName);
+
+                    articles.push({
+                        selected: false,
+                        pmid, title, firstAuthor,
+                        journal: journalName, year, doi,
+                        articleType: types.join('; '),
+                        quartile
+                    });
+                });
+            }
+
+            searchResults = articles;
+            renderResults();
+
+        } catch (err) {
+            alert('Error connecting to PubMed: ' + err.message);
+        } finally {
+            btn.disabled = false;
+            document.getElementById('loadingOverlay').classList.remove('active');
+        }
+    }
+
+    // ==================== Render Results ====================
+    function renderResults() {
+        const section = document.getElementById('resultsSection');
+        const tbody = document.getElementById('resultsBody');
+
+        if (searchResults.length === 0) {
+            section.classList.remove('visible');
+            return;
+        }
+
+        section.classList.add('visible');
+        document.getElementById('resultCount').textContent = `${searchResults.length} articles found`;
+
+        tbody.innerHTML = '';
+        searchResults.forEach((art, idx) => {
+            const tr = document.createElement('tr');
+            const pmidUrl = art.pmid ? `https://pubmed.ncbi.nlm.nih.gov/${art.pmid}/` : '';
+            tr.innerHTML = `
+                <td><input type="checkbox" ${art.selected ? 'checked' : ''} onchange="searchResults[${idx}].selected = this.checked"></td>
+                <td>${pmidUrl ? `<a href="${pmidUrl}" target="_blank">${art.pmid}</a>` : ''}</td>
+                <td>${escapeHtml(art.quartile)}</td>
+                <td>${escapeHtml(art.title)}</td>
+                <td>${escapeHtml(art.firstAuthor)}</td>
+                <td>${escapeHtml(art.journal)}</td>
+                <td>${escapeHtml(art.year)}</td>
+                <td>${art.doi ? `<a href="${art.doi}" target="_blank">${art.doi.replace('https://doi.org/','')}</a>` : ''}</td>
+                <td>${escapeHtml(art.articleType)}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    function escapeHtml(str) {
+        if (!str) return '';
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
+    function toggleSelectAll() {
+        const checked = document.getElementById('selectAll').checked;
+        searchResults.forEach(r => r.selected = checked);
+        renderResults();
+        document.getElementById('selectAll').checked = checked;
+    }
+
+    // ==================== Excel Export ====================
+    function downloadExcel() {
+        if (searchResults.length === 0) return;
+
+        const data = searchResults.map(r => ({
+            'PMID': r.pmid ? `https://pubmed.ncbi.nlm.nih.gov/${r.pmid}/` : '',
+            'Quartile': r.quartile,
+            'Title': r.title,
+            'First Author': r.firstAuthor,
+            'Journal': r.journal,
+            'Year': r.year,
+            'DOI': r.doi,
+            'Article Type': r.articleType
+        }));
+
+        const ws = XLSX.utils.json_to_sheet(data);
+
+        // Set column widths
+        ws['!cols'] = [
+            { wch: 15 }, { wch: 10 }, { wch: 60 }, { wch: 20 },
+            { wch: 30 }, { wch: 8 }, { wch: 35 }, { wch: 30 }
+        ];
+
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Results');
+        XLSX.writeFile(wb, 'PubMed_List.xlsx');
+    }
+
+    // ==================== Word Export ====================
+    async function generateWordSummary() {
+        const selected = searchResults.filter(r => r.selected);
+        if (selected.length === 0) {
+            alert('Please select at least one article using the checkboxes.');
+            return;
+        }
+
+        const spinner = document.getElementById('wordSpinner');
+        spinner.classList.add('active');
+        document.getElementById('loadingOverlay').classList.add('active');
+        document.getElementById('loadingText').textContent = 'Fetching abstracts and generating Word doc...';
+
+        try {
+            const ids = selected.map(r => r.pmid).filter(Boolean);
+            const fetchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=${ids.join(',')}&retmode=xml`;
+            const resp = await fetch(fetchUrl);
+            const xmlText = await resp.text();
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
+
+            const { Document: DocxDocument, Packer, Paragraph, TextRun, HeadingLevel, BorderStyle } = docx;
+
+            const children = [
+                new Paragraph({
+                    text: 'PubMed Article Summaries',
+                    heading: HeadingLevel.TITLE,
+                    spacing: { after: 300 }
+                })
+            ];
+
+            const pubArticles = xmlDoc.querySelectorAll('PubmedArticle');
+            pubArticles.forEach(pa => {
+                const citation = pa.querySelector('MedlineCitation');
+                const article = citation?.querySelector('Article');
+
+                const pmid = citation?.querySelector('PMID')?.textContent || 'N/A';
+                const title = article?.querySelector('ArticleTitle')?.textContent || 'No title';
+
+                const authorNodes = article?.querySelectorAll('AuthorList Author') || [];
+                const authors = [];
+                authorNodes.forEach(a => {
+                    const last = a.querySelector('LastName')?.textContent || '';
+                    const fore = a.querySelector('ForeName')?.textContent || '';
+                    if (last) authors.push(fore ? `${fore} ${last}` : last);
+                });
+                const authorsStr = authors.length ? authors.join(', ') : 'No authors listed';
+
+                const journal = article?.querySelector('Title')?.textContent
+                    || citation?.querySelector('MedlineJournalInfo MedlineTA')?.textContent || 'No journal';
+
+                const abstractNodes = article?.querySelectorAll('Abstract AbstractText') || [];
+                let abstractText = '';
+                abstractNodes.forEach(n => { abstractText += (abstractText ? ' ' : '') + n.textContent; });
+                if (!abstractText) abstractText = 'No abstract found.';
+
+                children.push(
+                    new Paragraph({ text: `PMID: ${pmid}`, heading: HeadingLevel.HEADING_2, spacing: { before: 400 } }),
+                    new Paragraph({
+                        children: [
+                            new TextRun({ text: 'Title: ', bold: true }),
+                            new TextRun(title)
+                        ]
+                    }),
+                    new Paragraph({
+                        children: [
+                            new TextRun({ text: 'Authors: ', bold: true }),
+                            new TextRun(authorsStr)
+                        ]
+                    }),
+                    new Paragraph({
+                        children: [
+                            new TextRun({ text: 'Journal: ', bold: true }),
+                            new TextRun(journal)
+                        ]
+                    }),
+                    new Paragraph({
+                        children: [
+                            new TextRun({ text: 'Abstract: ', bold: true }),
+                            new TextRun(abstractText)
+                        ],
+                        spacing: { after: 200 }
+                    }),
+                    new Paragraph({
+                        text: '──────────────────────────────────────────────────',
+                        spacing: { after: 200 }
+                    })
+                );
+            });
+
+            const doc = new DocxDocument({
+                sections: [{ children }]
+            });
+
+            const blob = await Packer.toBlob(doc);
+            saveAs(blob, 'PubMed_Abstracts_Summary.docx');
+
+        } catch (err) {
+            alert('Error generating Word document: ' + err.message);
+        } finally {
+            spinner.classList.remove('active');
+            document.getElementById('loadingOverlay').classList.remove('active');
+        }
+    }
+    </script>
+</body>
+</html>
