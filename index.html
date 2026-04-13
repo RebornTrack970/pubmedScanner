@@ -441,6 +441,9 @@
                             <tr>
                                 <th><label class="select-all-label"><input type="checkbox" id="selectAll" onchange="toggleSelectAll()"> All</label></th>
                                 <th>PMID</th>
+                                <th>PMCID</th>
+                                <th>Corresp. Name</th>
+                                <th>Corresp. Email</th>
                                 <th>Quartile</th>
                                 <th>Title</th>
                                 <th>First Author</th>
@@ -555,6 +558,34 @@
     renderOptions();
 
     // ==================== Scimago ====================
+    // Try to auto-load scimago.csv if it sits in the same directory (e.g. GitHub Pages)
+    // Note: This will fail with a CORS/Network Protocol error if index.html is opened locally via file:// 
+    fetch('./scimago.csv', { cache: 'no-store' })
+        .then(response => {
+            if (!response.ok) throw new Error('File not found');
+            return response.text();
+        })
+        .then(csvText => {
+            Papa.parse(csvText, {
+                header: true,
+                delimiter: ';',
+                skipEmptyLines: true,
+                complete: function(results) {
+                    processScimagoData(results, 'scimago.csv');
+                }
+            });
+        })
+        .catch(err => {
+            console.error("Auto-load failed:", err);
+            const isLocal = window.location.protocol === 'file:';
+            if (isLocal) {
+                document.getElementById('scimagoStatus').innerHTML = 
+                    '<div class="alert alert-info"><b>Local Testing Notice:</b> Browsers block auto-loading local files for security. Please either run a local web server (e.g. <code>python -m http.server</code>) or upload your CSV manually above. On GitHub Pages, it will auto-load seamlessly!</div>';
+            } else {
+                 console.log('scimago.csv not found or auto-load failed, user can upload manually.');
+            }
+        });
+
     document.getElementById('scimagoFile').addEventListener('change', function(e) {
         const file = e.target.files[0];
         if (!file) return;
@@ -565,28 +596,32 @@
             delimiter: ';',
             skipEmptyLines: true,
             complete: function(results) {
-                const cols = results.meta.fields;
-                const titleCol = cols.find(c => ['title','journal title','source title'].includes(c.toLowerCase()));
-                const quartileCol = cols.find(c => c.toLowerCase().includes('quartile'));
-
-                if (!titleCol || !quartileCol) {
-                    document.getElementById('scimagoStatus').innerHTML =
-                        '<div class="alert alert-warning">Could not find Title or Quartile columns in CSV.</div>';
-                    scimagoData = null;
-                    return;
-                }
-
-                scimagoData = {};
-                results.data.forEach(row => {
-                    const name = normalizeJournalName(row[titleCol]);
-                    if (name) scimagoData[name] = row[quartileCol] || 'Unknown';
-                });
-
-                document.getElementById('scimagoStatus').innerHTML =
-                    `<div class="alert alert-success">Loaded ${Object.keys(scimagoData).length} journals from CSV.</div>`;
+                processScimagoData(results, file.name);
             }
         });
     });
+
+    function processScimagoData(results, filename) {
+        const cols = results.meta.fields;
+        const titleCol = cols.find(c => ['title','journal title','source title'].includes(c.toLowerCase()));
+        const quartileCol = cols.find(c => c.toLowerCase().includes('quartile'));
+
+        if (!titleCol || !quartileCol) {
+            document.getElementById('scimagoStatus').innerHTML =
+                '<div class="alert alert-warning">Could not find Title or Quartile columns in CSV (' + filename + ').</div>';
+            scimagoData = null;
+            return;
+        }
+
+        scimagoData = {};
+        results.data.forEach(row => {
+            const name = normalizeJournalName(row[titleCol]);
+            if (name) scimagoData[name] = row[quartileCol] || 'Unknown';
+        });
+
+        document.getElementById('scimagoStatus').innerHTML =
+            `<div class="alert alert-success">✅ Loaded ${Object.keys(scimagoData).length} journals from ${filename}.</div>`;
+    }
 
     function normalizeJournalName(name) {
         if (!name || typeof name !== 'string') return '';
@@ -694,12 +729,22 @@
                 const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
 
                 const pubArticles = xmlDoc.querySelectorAll('PubmedArticle');
+                const batchArticles = [];
                 pubArticles.forEach(pa => {
                     const citation = pa.querySelector('MedlineCitation');
                     const article = citation?.querySelector('Article');
 
                     const pmid = citation?.querySelector('PMID')?.textContent || '';
                     const title = article?.querySelector('ArticleTitle')?.textContent || '';
+                    
+                    let pmcid = '';
+                    const articleIds = pa.querySelectorAll('PubmedData ArticleIdList ArticleId');
+                    articleIds.forEach(idNode => {
+                        if (idNode.getAttribute('IdType') === 'pmc') {
+                            pmcid = idNode.textContent;
+                        }
+                    });
+                    if (pmcid && !pmcid.startsWith('PMC')) pmcid = 'PMC' + pmcid;
 
                     // First author
                     const authorNode = article?.querySelector('AuthorList Author');
@@ -736,13 +781,90 @@
 
                     const quartile = findQuartile(journalName);
 
-                    articles.push({
+                    batchArticles.push({
                         selected: false,
-                        pmid, title, firstAuthor,
+                        pmid, pmcid, title, firstAuthor,
                         journal: journalName, year, doi,
                         articleType: types.join('; '),
                         quartile
                     });
+                });
+                
+                // Fetch corresponding author info for found PMCIDs in this batch
+                const pmcIds = batchArticles.map(a => a.pmcid).filter(Boolean);
+                const pmcInfo = {};
+                if (pmcIds.length > 0) {
+                     const cleanIds = pmcIds.map(id => id.replace('PMC', ''));
+                     const pmcFetchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id=${cleanIds.join(',')}&retmode=xml`;
+                     try {
+                         const pmcResp = await fetch(pmcFetchUrl);
+                         const pmcXmlText = await pmcResp.text();
+                         const pmcParser = new DOMParser();
+                         const pmcDoc = pmcParser.parseFromString(pmcXmlText, 'text/xml');
+                         
+                         const pmcArticles = pmcDoc.querySelectorAll('article');
+                         pmcArticles.forEach(pmcArt => {
+                             const pidNodes = pmcArt.querySelectorAll('article-id');
+                             let pid = '';
+                             pidNodes.forEach(n => {
+                                 if (n.getAttribute('pub-id-type') === 'pmcid') {
+                                     pid = n.textContent;
+                                 }
+                             });
+                             if (pid && !pid.startsWith('PMC')) pid = 'PMC' + pid;
+                             if (!pid) return;
+                             
+                             let cEmail = '';
+                             let cName = '';
+                             
+                             const correspDict = {};
+                             const corresps = pmcArt.querySelectorAll('corresp');
+                             corresps.forEach(c => {
+                                 const cid = c.getAttribute('id');
+                                 const emailNode = c.querySelector('email');
+                                 const email = emailNode ? emailNode.textContent : '';
+                                 if (email) {
+                                     if (cid) correspDict[cid] = email;
+                                     if (!cEmail) cEmail = email;
+                                 }
+                             });
+                             
+                             const contribs = pmcArt.querySelectorAll('contrib[contrib-type="author"]');
+                             for (let j = 0; j < contribs.length; j++) {
+                                 const c = contribs[j];
+                                 let isCorresp = c.getAttribute('corresp') === 'yes';
+                                 let authorEmail = '';
+                                 
+                                 const xrefs = c.querySelectorAll('xref[ref-type="corresp"]');
+                                 xrefs.forEach(xr => {
+                                     const rid = xr.getAttribute('rid');
+                                     if (rid && correspDict[rid]) {
+                                         isCorresp = true;
+                                         authorEmail = correspDict[rid];
+                                     }
+                                 });
+                                 
+                                 if (isCorresp) {
+                                     const surname = c.querySelector('name surname');
+                                     const givenNames = c.querySelector('name given-names');
+                                     const sStr = surname ? surname.textContent : '';
+                                     const gStr = givenNames ? givenNames.textContent : '';
+                                     cName = `${gStr} ${sStr}`.trim();
+                                     if (authorEmail) cEmail = authorEmail;
+                                     break;
+                                 }
+                             }
+                             pmcInfo[pid] = { name: cName, email: cEmail };
+                         });     
+                     } catch(e) {
+                         console.error("PMC fetch error", e);
+                     }
+                }
+                
+                batchArticles.forEach(a => {
+                    a.correspName = pmcInfo[a.pmcid]?.name || 'N/A';
+                    a.correspEmail = pmcInfo[a.pmcid]?.email || 'N/A';
+                    articles.push(a);
                 });
             }
 
@@ -774,9 +896,13 @@
         searchResults.forEach((art, idx) => {
             const tr = document.createElement('tr');
             const pmidUrl = art.pmid ? `https://pubmed.ncbi.nlm.nih.gov/${art.pmid}/` : '';
+            const pmcidUrl = art.pmcid ? `https://www.ncbi.nlm.nih.gov/pmc/articles/${art.pmcid}/` : '';
             tr.innerHTML = `
                 <td><input type="checkbox" ${art.selected ? 'checked' : ''} onchange="searchResults[${idx}].selected = this.checked"></td>
                 <td>${pmidUrl ? `<a href="${pmidUrl}" target="_blank">${art.pmid}</a>` : ''}</td>
+                <td>${pmcidUrl ? `<a href="${pmcidUrl}" target="_blank">${art.pmcid}</a>` : ''}</td>
+                <td>${escapeHtml(art.correspName)}</td>
+                <td>${escapeHtml(art.correspEmail)}</td>
                 <td>${escapeHtml(art.quartile)}</td>
                 <td>${escapeHtml(art.title)}</td>
                 <td>${escapeHtml(art.firstAuthor)}</td>
@@ -809,6 +935,9 @@
 
         const data = searchResults.map(r => ({
             'PMID': r.pmid ? `https://pubmed.ncbi.nlm.nih.gov/${r.pmid}/` : '',
+            'PMCID': r.pmcid ? `https://www.ncbi.nlm.nih.gov/pmc/articles/${r.pmcid}/` : '',
+            'Corresp. Name': r.correspName || 'N/A',
+            'Corresp. Email': r.correspEmail || 'N/A',
             'Quartile': r.quartile,
             'Title': r.title,
             'First Author': r.firstAuthor,
@@ -822,7 +951,8 @@
 
         // Set column widths
         ws['!cols'] = [
-            { wch: 15 }, { wch: 10 }, { wch: 60 }, { wch: 20 },
+            { wch: 15 }, { wch: 15 }, { wch: 20 }, { wch: 25 },
+            { wch: 10 }, { wch: 60 }, { wch: 20 },
             { wch: 30 }, { wch: 8 }, { wch: 35 }, { wch: 30 }
         ];
 
