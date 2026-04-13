@@ -7,6 +7,7 @@ import os
 from Bio import Entrez, Medline
 from docx import Document
 from difflib import get_close_matches
+import xml.etree.ElementTree as ET
 
 if (not os.environ.get('PYTHONHTTPSVERIFY', '') and
         getattr(ssl, '_create_unverified_context', None)):
@@ -48,6 +49,84 @@ def normalize_journal_name(name):
     name = re.sub(r'[^a-z0-9 ]+', ' ', name)
     return name.strip()
 
+def get_pmc_corresp_info(pmc_ids):
+    if not pmc_ids:
+        return {}
+        
+    Entrez.email = "pubmed_tool_web@example.com"
+    clean_ids = [pid.replace("PMC", "") for pid in pmc_ids if pid]
+    if not clean_ids:
+        return {}
+        
+    try:
+        handle = Entrez.efetch(db="pmc", id=",".join(clean_ids), rettype="xml")
+        xml_data = handle.read()
+        handle.close()
+    except Exception as e:
+        print("Error fetching pmc:", e)
+        return {}
+
+    try:
+        root = ET.fromstring(xml_data)
+    except Exception as e:
+        print("Error parsing pmc xml:", e)
+        return {}
+
+    results = {}
+    for article in root.findall(".//article"):
+        pmcid_node = article.find(".//article-id[@pub-id-type='pmcid']")
+        if pmcid_node is None:
+            continue
+        pmcid = pmcid_node.text
+        if pmcid and not pmcid.startswith("PMC"):
+            pmcid = "PMC" + pmcid
+            
+        corresp_email = ""
+        corresp_name = ""
+        
+        corresp_dict = {}
+        for corresp in article.findall(".//corresp"):
+            cid = corresp.get("id")
+            email_node = corresp.find(".//email")
+            email = email_node.text if email_node is not None else ""
+            if email:
+                if cid:
+                    corresp_dict[cid] = email
+                if not corresp_email:
+                    corresp_email = email
+                    
+        for contrib in article.findall(".//contrib[@contrib-type='author']"):
+            is_corresp = False
+            if contrib.get("corresp") == "yes":
+                is_corresp = True
+                
+            email_for_this_author = ""
+            for xref in contrib.findall("xref[@ref-type='corresp']"):
+                rid = xref.get("rid")
+                if rid in corresp_dict:
+                    is_corresp = True
+                    email_for_this_author = corresp_dict[rid]
+                    
+            if is_corresp:
+                name = contrib.find("name")
+                if name is not None:
+                    surname = name.find("surname")
+                    given = name.find("given-names")
+                    s_str = surname.text if surname is not None else ""
+                    g_str = given.text if given is not None else ""
+                    corresp_name = f"{g_str} {s_str}".strip()
+                    if email_for_this_author:
+                        corresp_email = email_for_this_author
+                break 
+                
+        if pmcid:
+            results[pmcid] = {
+                "name": corresp_name,
+                "email": corresp_email
+            }
+        
+    return results
+
 def search_pubmed(query, max_results):
     Entrez.email = "pubmed_tool_web@example.com"
     try:
@@ -71,13 +150,17 @@ def search_pubmed(query, max_results):
                 clean_doi = doi_raw.split(' ')[0]
                 doi_link = f"https://doi.org/{clean_doi}"
 
-            # Handle PMID (Convert to FULL URL for LinkColumn to work)
             pmid = r.get("PMID", "")
             pmid_link = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/" if pmid else ""
+            
+            # Handle PMCID
+            pmc_raw = r.get("PMC", "")
+            pmc_link = f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmc_raw}/" if pmc_raw else ""
 
             articles.append({
                 "Select": False,
                 "PMID": pmid_link, # Store URL, display ID later
+                "PMCID": pmc_link,
                 "Title": r.get("TI", ""),
                 "First Author": r.get("AU", ["N/A"])[0],
                 "Journal": r.get("JT", ""),
@@ -85,7 +168,18 @@ def search_pubmed(query, max_results):
                 "DOI": doi_link,
                 "Article Type": "; ".join(r.get("PT", []))
             })
+            
+        # Fetch corresponding author info for found PMCIDs
+        pmc_ids = [r.get("PMC", "") for r in records if r.get("PMC", "")]
+        corresp_info = get_pmc_corresp_info(pmc_ids[:100]) # Batched up to 100 max safe check, Entrez usually handles large
         
+        for a in articles:
+            pmc_val = a["PMCID"]
+            pmcid_clean = pmc_val.strip("/").split("/")[-1] if pmc_val else ""
+            info = corresp_info.get(pmcid_clean, {})
+            a["Corresp. Author Name"] = info.get("name", "N/A") if info.get("name") else "N/A"
+            a["Corresp. Author Email"] = info.get("email", "N/A") if info.get("email") else "N/A"
+            
         return pd.DataFrame(articles)
     except Exception as e:
         st.error(f"Error connecting to PubMed: {e}")
@@ -137,18 +231,31 @@ def to_excel(df):
         
         link_fmt = workbook.add_format({'font_color': 'blue', 'underline': 1})
         
-        pmid_idx = export_df.columns.get_loc("PMID")
-        doi_idx = export_df.columns.get_loc("DOI")
+        pmid_idx = export_df.columns.get_loc("PMID") if "PMID" in export_df.columns else -1
+        pmcid_idx = export_df.columns.get_loc("PMCID") if "PMCID" in export_df.columns else -1
+        doi_idx = export_df.columns.get_loc("DOI") if "DOI" in export_df.columns else -1
         
-        for row_num, (pmid_url, doi_url) in enumerate(zip(export_df['PMID'], export_df['DOI']), start=1):
-            if pmid_url:
+        # We ensure they exist before trying to zip, but safe zip handles it if length is same
+        pmid_col = export_df['PMID'] if "PMID" in export_df.columns else [''] * len(export_df)
+        pmcid_col = export_df['PMCID'] if "PMCID" in export_df.columns else [''] * len(export_df)
+        doi_col = export_df['DOI'] if "DOI" in export_df.columns else [''] * len(export_df)
+        
+        for row_num, (pmid_url, pmcid_url, doi_url) in enumerate(zip(pmid_col, pmcid_col, doi_col), start=1):
+            if pmid_url and pmid_idx != -1:
                 try:
                     display_id = pmid_url.strip("/").split("/")[-1]
                 except:
                     display_id = "Link"
                 worksheet.write_url(row_num, pmid_idx, pmid_url, string=display_id, cell_format=link_fmt)
+                
+            if pmcid_url and pmcid_idx != -1:
+                try:
+                    display_id = pmcid_url.strip("/").split("/")[-1]
+                except:
+                    display_id = "Link"
+                worksheet.write_url(row_num, pmcid_idx, pmcid_url, string=display_id, cell_format=link_fmt)
             
-            if doi_url:
+            if doi_url and doi_idx != -1:
                 display_doi = doi_url.replace("https://doi.org/", "")
                 worksheet.write_url(row_num, doi_idx, doi_url, string=display_doi, cell_format=link_fmt)
                 
@@ -288,7 +395,7 @@ if st.button("🔎 Start Search", type="primary"):
             else:
                 df["Quartile"] = "Unknown (No File)"
             
-            cols = ["Select", "PMID", "Quartile", "Title", "First Author", "Journal", "Year", "DOI", "Article Type"]
+            cols = ["Select", "PMID", "PMCID", "Corresp. Author Name", "Corresp. Author Email", "Quartile", "Title", "First Author", "Journal", "Year", "DOI", "Article Type"]
             df = df[cols]
             st.session_state.search_results = df
 
@@ -309,12 +416,16 @@ if not st.session_state.search_results.empty:
                 label="PMID",
                 display_text=r"https://pubmed\.ncbi\.nlm\.nih\.gov/(.*?)/"
             ),
+            "PMCID": st.column_config.LinkColumn(
+                label="PMCID",
+                display_text=r"https://www\.ncbi\.nlm\.nih\.gov/pmc/articles/(.*?)/"
+            ),
             "DOI": st.column_config.LinkColumn(
                 label="DOI",
                 display_text=r"https://doi\.org/(.*)"
             )
         },
-        disabled=["PMID", "Quartile", "Title", "First Author", "Journal", "Year", "DOI", "Article Type"],
+        disabled=["PMID", "PMCID", "Corresp. Author Name", "Corresp. Author Email", "Quartile", "Title", "First Author", "Journal", "Year", "DOI", "Article Type"],
         hide_index=True,
         use_container_width=True
     )
