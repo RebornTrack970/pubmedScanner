@@ -451,6 +451,7 @@
                                 <th>Year</th>
                                 <th>DOI</th>
                                 <th>Article Type</th>
+                                <th>Keywords</th>
                             </tr>
                         </thead>
                         <tbody id="resultsBody"></tbody>
@@ -779,6 +780,11 @@
                     const types = [];
                     ptNodes?.forEach(pt => types.push(pt.textContent));
 
+                    // Keywords
+                    const keywordNodes = citation?.querySelectorAll('KeywordList Keyword');
+                    const keywords = [];
+                    keywordNodes?.forEach(k => keywords.push(k.textContent));
+
                     const quartile = findQuartile(journalName);
 
                     batchArticles.push({
@@ -786,6 +792,7 @@
                         pmid, pmcid, title, firstAuthor,
                         journal: journalName, year, doi,
                         articleType: types.join('; '),
+                        keywords: keywords.join('; '),
                         quartile
                     });
                 });
@@ -910,6 +917,7 @@
                 <td>${escapeHtml(art.year)}</td>
                 <td>${art.doi ? `<a href="${art.doi}" target="_blank">${art.doi.replace('https://doi.org/','')}</a>` : ''}</td>
                 <td>${escapeHtml(art.articleType)}</td>
+                <td>${escapeHtml(art.keywords)}</td>
             `;
             tbody.appendChild(tr);
         });
@@ -944,7 +952,8 @@
             'Journal': r.journal,
             'Year': r.year,
             'DOI': r.doi,
-            'Article Type': r.articleType
+            'Article Type': r.articleType,
+            'Keywords': r.keywords || ''
         }));
 
         const ws = XLSX.utils.json_to_sheet(data);
@@ -953,7 +962,7 @@
         ws['!cols'] = [
             { wch: 15 }, { wch: 15 }, { wch: 20 }, { wch: 25 },
             { wch: 10 }, { wch: 60 }, { wch: 20 },
-            { wch: 30 }, { wch: 8 }, { wch: 35 }, { wch: 30 }
+            { wch: 30 }, { wch: 8 }, { wch: 35 }, { wch: 30 }, { wch: 30 }
         ];
 
         const wb = XLSX.utils.book_new();
