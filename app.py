@@ -166,7 +166,8 @@ def search_pubmed(query, max_results):
                 "Journal": r.get("JT", ""),
                 "Year": r.get("DP", "N/A")[:4],
                 "DOI": doi_link,
-                "Article Type": "; ".join(r.get("PT", []))
+                "Article Type": "; ".join(r.get("PT", [])),
+                "Keywords": "; ".join(r.get("OT", []))
             })
             
         # Fetch corresponding author info for found PMCIDs
@@ -395,7 +396,7 @@ if st.button("🔎 Start Search", type="primary"):
             else:
                 df["Quartile"] = "Unknown (No File)"
             
-            cols = ["Select", "PMID", "PMCID", "Corresp. Author Name", "Corresp. Author Email", "Quartile", "Title", "First Author", "Journal", "Year", "DOI", "Article Type"]
+            cols = ["Select", "PMID", "PMCID", "Corresp. Author Name", "Corresp. Author Email", "Quartile", "Title", "First Author", "Journal", "Year", "DOI", "Article Type", "Keywords"]
             df = df[cols]
             st.session_state.search_results = df
 
@@ -425,7 +426,7 @@ if not st.session_state.search_results.empty:
                 display_text=r"https://doi\.org/(.*)"
             )
         },
-        disabled=["PMID", "PMCID", "Corresp. Author Name", "Corresp. Author Email", "Quartile", "Title", "First Author", "Journal", "Year", "DOI", "Article Type"],
+        disabled=["PMID", "PMCID", "Corresp. Author Name", "Corresp. Author Email", "Quartile", "Title", "First Author", "Journal", "Year", "DOI", "Article Type", "Keywords"],
         hide_index=True,
         use_container_width=True
     )
