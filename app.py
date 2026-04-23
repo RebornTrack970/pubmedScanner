@@ -264,11 +264,14 @@ def to_excel(df):
         
     return output.getvalue()
 
+WORD_BATCH_SIZE = 250
+
 def generate_word_summary(pmid_urls):
-    """Fetches abstracts for selected PMIDs (passed as URLs) and creates a Word doc."""
+    """Fetches abstracts for selected PMIDs (passed as URLs) and creates Word docs in batches of 250.
+    
+    Returns a list of (filename, bytes) tuples, one per batch.
+    """
     Entrez.email = "pubmed_tool_web@example.com"
-    doc = Document()
-    doc.add_heading('PubMed Article Summaries', level=0)
     
     # Extract IDs from URLs
     clean_ids = []
@@ -279,12 +282,29 @@ def generate_word_summary(pmid_urls):
                 clean_ids.append(parts[-1])
     
     if not clean_ids:
-        return None
+        return []
 
-    try:
-        handle = Entrez.efetch(db="pubmed", id=",".join(clean_ids), rettype="abstract", retmode="xml")
-        records = Entrez.read(handle)
-        handle.close()
+    total = len(clean_ids)
+    total_batches = (total + WORD_BATCH_SIZE - 1) // WORD_BATCH_SIZE
+    results = []
+
+    for batch_idx in range(total_batches):
+        batch_ids = clean_ids[batch_idx * WORD_BATCH_SIZE : (batch_idx + 1) * WORD_BATCH_SIZE]
+        batch_num = batch_idx + 1
+
+        try:
+            handle = Entrez.efetch(db="pubmed", id=",".join(batch_ids), rettype="abstract", retmode="xml")
+            records = Entrez.read(handle)
+            handle.close()
+        except Exception as e:
+            print(f"Batch {batch_num} fetch error: {e}")
+            continue
+
+        doc = Document()
+        if total_batches > 1:
+            doc.add_heading(f'PubMed Article Summaries (Part {batch_num} of {total_batches})', level=0)
+        else:
+            doc.add_heading('PubMed Article Summaries', level=0)
         
         for record in records.get("PubmedArticle", []):
             citation = record.get("MedlineCitation", {})
@@ -321,15 +341,19 @@ def generate_word_summary(pmid_urls):
             p.add_run("Abstract: ").bold = True
             p.add_run(abstract_text)
             
-            doc.add_paragraph("_" * 50) 
+            doc.add_paragraph("_" * 50)
 
         doc_buffer = io.BytesIO()
         doc.save(doc_buffer)
-        return doc_buffer.getvalue()
 
-    except Exception as e:
-        print(e)
-        return None
+        if total_batches > 1:
+            filename = f"PubMed_Abstracts_Part{batch_num}of{total_batches}.docx"
+        else:
+            filename = "PubMed_Abstracts_Summary.docx"
+
+        results.append((filename, doc_buffer.getvalue()))
+
+    return results
 
 col_header, col_tutorial = st.columns([7, 1]) # Adjust ratio to move button
 
@@ -446,18 +470,33 @@ if not st.session_state.search_results.empty:
         selected_rows = edited_df[edited_df["Select"] == True]
         
         if not selected_rows.empty:
-            if st.button("📄 Generate Word Summary for Selected"):
-                with st.spinner("Fetching abstracts and generating Word doc..."):
+            n_selected = len(selected_rows)
+            n_parts = (n_selected + WORD_BATCH_SIZE - 1) // WORD_BATCH_SIZE
+            label = f"📄 Generate Word Summary ({n_selected} articles{', ' + str(n_parts) + ' parts' if n_parts > 1 else ''})"
+            if st.button(label):
+                with st.spinner("Fetching abstracts and generating Word doc(s)..."):
                     pmid_urls = selected_rows["PMID"].astype(str).tolist()
-                    word_data = generate_word_summary(pmid_urls)
+                    word_parts = generate_word_summary(pmid_urls)
                     
-                    if word_data:
-                        st.download_button(
-                            label="⬇️ Download Word Summary (.docx)",
-                            data=word_data,
-                            file_name="PubMed_Abstracts_Summary.docx",
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                        )
+                    if word_parts:
+                        if len(word_parts) == 1:
+                            fname, fdata = word_parts[0]
+                            st.download_button(
+                                label="⬇️ Download Word Summary (.docx)",
+                                data=fdata,
+                                file_name=fname,
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                            )
+                        else:
+                            st.success(f"✅ Generated {len(word_parts)} Word documents (250 articles each).")
+                            for fname, fdata in word_parts:
+                                st.download_button(
+                                    label=f"⬇️ Download {fname}",
+                                    data=fdata,
+                                    file_name=fname,
+                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    key=fname
+                                )
                     else:
                         st.error("Failed to generate Word document.")
         else:
