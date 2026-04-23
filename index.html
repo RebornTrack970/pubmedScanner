@@ -978,94 +978,114 @@
             return;
         }
 
+        const BATCH_SIZE = 250;
         const spinner = document.getElementById('wordSpinner');
         spinner.classList.add('active');
         document.getElementById('loadingOverlay').classList.add('active');
-        document.getElementById('loadingText').textContent = 'Fetching abstracts and generating Word doc...';
+
+        const { Document: DocxDocument, Packer, Paragraph, TextRun, HeadingLevel } = docx;
+
+        const ids = selected.map(r => r.pmid).filter(Boolean);
+        const totalBatches = Math.ceil(ids.length / BATCH_SIZE);
 
         try {
-            const ids = selected.map(r => r.pmid).filter(Boolean);
-            const fetchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=${ids.join(',')}&retmode=xml`;
-            const resp = await fetch(fetchUrl);
-            const xmlText = await resp.text();
-            const parser = new DOMParser();
-            const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
+            for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
+                const batchIds = ids.slice(batchIdx * BATCH_SIZE, (batchIdx + 1) * BATCH_SIZE);
+                const batchNum = batchIdx + 1;
+                document.getElementById('loadingText').textContent =
+                    `Fetching abstracts (batch ${batchNum}/${totalBatches}: ${batchIds.length} articles)...`;
 
-            const { Document: DocxDocument, Packer, Paragraph, TextRun, HeadingLevel, BorderStyle } = docx;
+                const fetchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=${batchIds.join(',')}&retmode=xml`;
+                const resp = await fetch(fetchUrl);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status} on batch ${batchNum}`);
+                const xmlText = await resp.text();
+                const parser = new DOMParser();
+                const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
 
-            const children = [
-                new Paragraph({
-                    text: 'PubMed Article Summaries',
-                    heading: HeadingLevel.TITLE,
-                    spacing: { after: 300 }
-                })
-            ];
-
-            const pubArticles = xmlDoc.querySelectorAll('PubmedArticle');
-            pubArticles.forEach(pa => {
-                const citation = pa.querySelector('MedlineCitation');
-                const article = citation?.querySelector('Article');
-
-                const pmid = citation?.querySelector('PMID')?.textContent || 'N/A';
-                const title = article?.querySelector('ArticleTitle')?.textContent || 'No title';
-
-                const authorNodes = article?.querySelectorAll('AuthorList Author') || [];
-                const authors = [];
-                authorNodes.forEach(a => {
-                    const last = a.querySelector('LastName')?.textContent || '';
-                    const fore = a.querySelector('ForeName')?.textContent || '';
-                    if (last) authors.push(fore ? `${fore} ${last}` : last);
-                });
-                const authorsStr = authors.length ? authors.join(', ') : 'No authors listed';
-
-                const journal = article?.querySelector('Title')?.textContent
-                    || citation?.querySelector('MedlineJournalInfo MedlineTA')?.textContent || 'No journal';
-
-                const abstractNodes = article?.querySelectorAll('Abstract AbstractText') || [];
-                let abstractText = '';
-                abstractNodes.forEach(n => { abstractText += (abstractText ? ' ' : '') + n.textContent; });
-                if (!abstractText) abstractText = 'No abstract found.';
-
-                children.push(
-                    new Paragraph({ text: `PMID: ${pmid}`, heading: HeadingLevel.HEADING_2, spacing: { before: 400 } }),
+                const children = [
                     new Paragraph({
-                        children: [
-                            new TextRun({ text: 'Title: ', bold: true }),
-                            new TextRun(title)
-                        ]
-                    }),
-                    new Paragraph({
-                        children: [
-                            new TextRun({ text: 'Authors: ', bold: true }),
-                            new TextRun(authorsStr)
-                        ]
-                    }),
-                    new Paragraph({
-                        children: [
-                            new TextRun({ text: 'Journal: ', bold: true }),
-                            new TextRun(journal)
-                        ]
-                    }),
-                    new Paragraph({
-                        children: [
-                            new TextRun({ text: 'Abstract: ', bold: true }),
-                            new TextRun(abstractText)
-                        ],
-                        spacing: { after: 200 }
-                    }),
-                    new Paragraph({
-                        text: '──────────────────────────────────────────────────',
-                        spacing: { after: 200 }
+                        text: totalBatches > 1
+                            ? `PubMed Article Summaries (Part ${batchNum} of ${totalBatches})`
+                            : 'PubMed Article Summaries',
+                        heading: HeadingLevel.TITLE,
+                        spacing: { after: 300 }
                     })
-                );
-            });
+                ];
 
-            const doc = new DocxDocument({
-                sections: [{ children }]
-            });
+                const pubArticles = xmlDoc.querySelectorAll('PubmedArticle');
+                pubArticles.forEach(pa => {
+                    const citation = pa.querySelector('MedlineCitation');
+                    const article = citation?.querySelector('Article');
 
-            const blob = await Packer.toBlob(doc);
-            saveAs(blob, 'PubMed_Abstracts_Summary.docx');
+                    const pmid = citation?.querySelector('PMID')?.textContent || 'N/A';
+                    const title = article?.querySelector('ArticleTitle')?.textContent || 'No title';
+
+                    const authorNodes = article?.querySelectorAll('AuthorList Author') || [];
+                    const authors = [];
+                    authorNodes.forEach(a => {
+                        const last = a.querySelector('LastName')?.textContent || '';
+                        const fore = a.querySelector('ForeName')?.textContent || '';
+                        if (last) authors.push(fore ? `${fore} ${last}` : last);
+                    });
+                    const authorsStr = authors.length ? authors.join(', ') : 'No authors listed';
+
+                    const journal = article?.querySelector('Title')?.textContent
+                        || citation?.querySelector('MedlineJournalInfo MedlineTA')?.textContent || 'No journal';
+
+                    const abstractNodes = article?.querySelectorAll('Abstract AbstractText') || [];
+                    let abstractText = '';
+                    abstractNodes.forEach(n => { abstractText += (abstractText ? ' ' : '') + n.textContent; });
+                    if (!abstractText) abstractText = 'No abstract found.';
+
+                    children.push(
+                        new Paragraph({ text: `PMID: ${pmid}`, heading: HeadingLevel.HEADING_2, spacing: { before: 400 } }),
+                        new Paragraph({
+                            children: [
+                                new TextRun({ text: 'Title: ', bold: true }),
+                                new TextRun(title)
+                            ]
+                        }),
+                        new Paragraph({
+                            children: [
+                                new TextRun({ text: 'Authors: ', bold: true }),
+                                new TextRun(authorsStr)
+                            ]
+                        }),
+                        new Paragraph({
+                            children: [
+                                new TextRun({ text: 'Journal: ', bold: true }),
+                                new TextRun(journal)
+                            ]
+                        }),
+                        new Paragraph({
+                            children: [
+                                new TextRun({ text: 'Abstract: ', bold: true }),
+                                new TextRun(abstractText)
+                            ],
+                            spacing: { after: 200 }
+                        }),
+                        new Paragraph({
+                            text: '──────────────────────────────────────────────────',
+                            spacing: { after: 200 }
+                        })
+                    );
+                });
+
+                document.getElementById('loadingText').textContent =
+                    `Generating Word document (part ${batchNum}/${totalBatches})...`;
+
+                const docObj = new DocxDocument({ sections: [{ children }] });
+                const blob = await Packer.toBlob(docObj);
+                const filename = totalBatches > 1
+                    ? `PubMed_Abstracts_Part${batchNum}of${totalBatches}.docx`
+                    : 'PubMed_Abstracts_Summary.docx';
+                saveAs(blob, filename);
+
+                // Small delay between batches to avoid hammering the API
+                if (batchIdx < totalBatches - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+            }
 
         } catch (err) {
             alert('Error generating Word document: ' + err.message);
